@@ -1,0 +1,6 @@
+# Normalize line endings in the repository; check text out with LF everywhere
+# so fixtures, shell scripts and the Docker build behave the same on Windows.
+* text=auto eol=lf
+
+*.png binary
+*.bin binary

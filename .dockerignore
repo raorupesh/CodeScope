@@ -1,0 +1,12 @@
+.git
+.github
+build
+build-*
+out
+cmake-build-*
+.vs
+.vscode
+.idea
+index.bin
+index.tmp
+*.md
