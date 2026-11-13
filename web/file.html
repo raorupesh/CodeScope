@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CodeScope · file</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="./">CodeScope</a>
+    <a id="back" href="./" class="muted">← back to search</a>
+  </header>
+
+  <main class="page">
+    <h1 id="file-path" class="file-path"></h1>
+    <p id="file-meta" class="muted"></p>
+    <p id="status" class="status muted" aria-live="polite"></p>
+    <div class="code-wrap">
+      <table id="code" class="code"><tbody></tbody></table>
+    </div>
+  </main>
+
+  <script src="common.js"></script>
+  <script src="file.js"></script>
+</body>
+</html>

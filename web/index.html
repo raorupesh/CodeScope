@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CodeScope</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="./">CodeScope</a>
+    <span id="index-info" class="muted"></span>
+  </header>
+
+  <main class="page">
+    <form id="search-form" class="search" autocomplete="off" role="search">
+      <input id="q" name="q" type="search" placeholder="Search code (literal substring)…" autofocus
+             aria-label="Search query">
+      <div class="filters">
+        <label class="check"><input id="case" type="checkbox"> Match case</label>
+        <label>Extensions <input id="ext" type="text" placeholder=".cpp,.hpp" size="14"></label>
+        <label>Path prefix <input id="path" type="text" placeholder="src/" size="14"></label>
+        <button id="reindex" type="button" class="secondary" title="Re-index changed files">Re-index</button>
+      </div>
+    </form>
+
+    <p id="status" class="status muted" aria-live="polite"></p>
+    <section id="results" class="results"></section>
+  </main>
+
+  <script src="common.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

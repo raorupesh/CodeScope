@@ -1,0 +1,17 @@
+# Build output
+build/
+build-*/
+out/
+cmake-build-*/
+compile_commands.json
+CMakeUserPresets.json
+
+# IDEs
+.vs/
+.vscode/
+.idea/
+*.swp
+
+# CodeScope runtime artifacts
+index.bin
+index.tmp
