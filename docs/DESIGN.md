@@ -63,6 +63,7 @@ list -> ignored dir? -> too large? -> unchanged (mtime + size)? -> read -> binar
   - Copying the posting lists costs O(index size) per re-index. That is the price of never mutating an index that readers are using.
 - **New** files are added. **Changed** files (different mtime or size) are removed and re-added under a new id. **Deleted** files, and files that became ignored, binary or too large, are removed.
 - **Removal** marks the id as deleted (a tombstone), and `compact()` then purges tombstoned ids from all posting lists at the end of the run. Ids are never reused within a snapshot, which keeps posting lists sorted.
+- Files skipped as binary are remembered by mtime and size, so an unchanged binary isn't read again on the next re-index. This list lives only in memory, so after a restart each binary is read once more.
 - A file that changes after it was listed is either caught by the size check after reading, or picked up by the next re-index because its mtime changed.
 - Each run records statistics: files seen, indexed, unchanged, removed, skipped by reason, read errors and elapsed time. They are exposed through `/api/stats`.
 

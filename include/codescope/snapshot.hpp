@@ -5,6 +5,9 @@
 // shared_ptr keep using it until they finish.
 
 #include <cstddef>
+#include <cstdint>
+#include <string>
+#include <unordered_map>
 
 #include "codescope/doc_store.hpp"
 #include "codescope/trigram_index.hpp"
@@ -23,10 +26,19 @@ struct IngestStats {
     double elapsed_ms = 0.0;
 };
 
+struct FileStamp {
+    std::int64_t mtime = 0;
+    std::uint64_t size = 0;
+};
+
 struct IndexSnapshot {
     DocStore docs;
     TrigramIndex index;
     IngestStats stats;
+    // Files skipped as binary on the last run. An unchanged entry (same mtime
+    // and size) is skipped again without being read. Not saved to disk, so
+    // after a restart each binary file is read once more.
+    std::unordered_map<std::string, FileStamp> binary_files;
 };
 
 }  // namespace codescope

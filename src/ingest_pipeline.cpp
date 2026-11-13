@@ -40,6 +40,10 @@ std::shared_ptr<IndexSnapshot> IngestPipeline::run(const IndexSnapshot* previous
 
     std::unordered_set<DocId> seen;  // live documents confirmed present on this run
 
+    // Rebuilt on every run, so deleted binaries drop out of the map.
+    const std::unordered_map<std::string, FileStamp> previous_binaries = std::move(snap->binary_files);
+    snap->binary_files.clear();
+
     for (const IFileSource::Entry& entry : source_.list()) {
         ++stats.files_seen;
         const std::string path = entry.path.generic_string();
@@ -66,6 +70,17 @@ std::shared_ptr<IndexSnapshot> IngestPipeline::run(const IndexSnapshot* previous
             ++stats.skipped_too_large;
             drop_existing(true);
             continue;
+        }
+
+        const FileStamp stamp{entry.mtime, static_cast<std::uint64_t>(entry.size)};
+        if (!existing) {
+            const auto bin = previous_binaries.find(path);
+            if (bin != previous_binaries.end() && bin->second.mtime == stamp.mtime &&
+                bin->second.size == stamp.size) {
+                ++stats.skipped_binary;  // unchanged binary: no need to read it again
+                snap->binary_files.emplace(path, stamp);
+                continue;
+            }
         }
 
         std::optional<std::string> content;
@@ -115,6 +130,7 @@ std::shared_ptr<IndexSnapshot> IngestPipeline::run(const IndexSnapshot* previous
         if (looks_binary(*content)) {
             ++stats.skipped_binary;
             drop_existing(true);
+            snap->binary_files.emplace(path, stamp);
             continue;
         }
 

@@ -108,6 +108,29 @@ TEST_F(IngestPipelineTest, FileThatBecomesBinaryIsRemoved) {
     EXPECT_EQ(result_paths(search(*second, "run_server")), Paths{"src/main.cpp"});
 }
 
+TEST_F(IngestPipelineTest, BinaryFileThatBecomesTextIsIndexed) {
+    const IngestPipeline pipeline(repo, options);
+    const auto first = pipeline.run(nullptr);
+    EXPECT_EQ(first->binary_files.size(), 1u);
+
+    repo.put("assets/logo.png", "now plain text run_server\n", /*mtime=*/2);
+    const auto second = pipeline.run(first.get());
+    EXPECT_EQ(second->stats.skipped_binary, 0u);
+    EXPECT_EQ(second->stats.indexed, 1u);
+    EXPECT_TRUE(second->binary_files.empty());
+    EXPECT_EQ(result_paths(search(*second, "run_server")),
+              (Paths{"src/main.cpp", "src/server.cpp", "assets/logo.png"}));
+}
+
+TEST_F(IngestPipelineTest, DeletedBinaryIsForgotten) {
+    const IngestPipeline pipeline(repo, options);
+    const auto first = pipeline.run(nullptr);
+    repo.erase("assets/logo.png");
+    const auto second = pipeline.run(first.get());
+    EXPECT_TRUE(second->binary_files.empty());
+    EXPECT_EQ(second->stats.skipped_binary, 0u);
+}
+
 TEST_F(IngestPipelineTest, PreviousSnapshotIsNotModified) {
     const IngestPipeline pipeline(repo, options);
     const auto first = pipeline.run(nullptr);
