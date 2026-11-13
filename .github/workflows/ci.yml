@@ -14,8 +14,47 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Decides what needs testing. Docs/README/image-only changes skip the builds.
+  # Skipped steps and jobs still report success, so the required checks pass.
+  changes:
+    name: changes
+    runs-on: ubuntu-24.04
+    outputs:
+      code: ${{ steps.filter.outputs.code }}  # C++ sources, build, tests, CI
+      app: ${{ steps.filter.outputs.app }}    # code, or anything shipped in the Docker image
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect changed files
+        id: filter
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          base=$([ "$EVENT" = pull_request ] && echo "$PR_BASE" || echo "$PUSH_BEFORE")
+          if [ "$EVENT" = workflow_dispatch ] || [ -z "$base" ] || ! git cat-file -e "$base^{commit}" 2>/dev/null; then
+            echo "No usable base commit: running everything."
+            { echo "code=true"; echo "app=true"; } >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          changed=$(git diff --name-only "$base" HEAD)
+          echo "Changed files:"; echo "$changed"
+          code=false; app=false
+          if grep -qE '^(src/|include/|tests/|bench/|CMakeLists\.txt$|\.github/workflows/)' <<< "$changed"; then
+            code=true
+          fi
+          if [ "$code" = true ] || grep -qE '^(web/|Dockerfile$|\.dockerignore$)' <<< "$changed"; then
+            app=true
+          fi
+          echo "code=$code app=$app"
+          { echo "code=$code"; echo "app=$app"; } >> "$GITHUB_OUTPUT"
+
   linux:
     name: ${{ matrix.name }}
+    needs: changes
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
@@ -30,18 +69,28 @@ jobs:
       CXX: ${{ matrix.cxx }}
       ASAN_OPTIONS: halt_on_error=1:detect_leaks=1
       UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+      # Conditions live on the steps, not the job: a skipped matrix job would
+      # not report the per-compiler check names the ruleset requires.
+      RUN: ${{ needs.changes.outputs.code }}
     steps:
+      - name: Nothing to build
+        if: env.RUN != 'true'
+        run: echo "No C++ or build changes; skipping."
+
       - uses: actions/checkout@v4
+        if: env.RUN == 'true'
 
       - name: Install Ninja
+        if: env.RUN == 'true'
         run: sudo apt-get update && sudo apt-get install -y ninja-build
 
       # Kernels with high-entropy ASLR break older ASan runtimes ("DEADLYSIGNAL" loops).
       - name: Lower ASLR entropy for ASan
-        if: matrix.sanitize == 'ON'
+        if: env.RUN == 'true' && matrix.sanitize == 'ON'
         run: sudo sysctl -w vm.mmap_rnd_bits=28
 
       - name: Configure
+        if: env.RUN == 'true'
         run: >
           cmake -S . -B build -G Ninja
           -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
@@ -49,19 +98,23 @@ jobs:
           -DCODESCOPE_WERROR=ON
 
       - name: Build
+        if: env.RUN == 'true'
         run: cmake --build build
 
       - name: Test
+        if: env.RUN == 'true'
         run: ctest --test-dir build --output-on-failure
 
       - name: CLI smoke test
-        if: matrix.sanitize == 'OFF'
+        if: env.RUN == 'true' && matrix.sanitize == 'OFF'
         run: |
           ./build/codescope --version
           ./build/codescope search tests/fixtures/sample_repo HttpRequest --ext .hpp
 
   windows:
     name: msvc
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -77,6 +130,8 @@ jobs:
 
   docker:
     name: docker
+    needs: changes
+    if: needs.changes.outputs.app == 'true'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -94,6 +149,7 @@ jobs:
           curl -fsS "http://localhost:8080/api/search?q=TrigramIndex&limit=5" | tee search.json
           grep -q '"total_files":' search.json
           curl -fsS http://localhost:8080/ | grep -q '<title>CodeScope</title>'
+          curl -fsS -o /dev/null http://localhost:8080/favicon.ico
 
       - name: Container logs
         if: always()

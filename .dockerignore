@@ -10,3 +10,4 @@ cmake-build-*
 index.bin
 index.tmp
 *.md
+images

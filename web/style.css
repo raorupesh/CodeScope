@@ -5,9 +5,15 @@
   --text: #1f2328;
   --muted: #656d76;
   --accent: #0969da;
-  --mark-bg: #fff3b0;
+  /* Brand colours, taken from the logo */
+  --brand-bg: #2a0a24;
+  --brand-text: #fbe9d7;
+  --brand-amber: #f8b04b;
+  --brand-coral: #f2654c;
+
+  --mark-bg: #fcd68f;
   --mark-text: #1f2328;
-  --match-row: #fffbe6;
+  --match-row: #fff7e8;
   --target-row: #ddf4ff;
   --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
   --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
@@ -22,9 +28,9 @@
     --text: #e6edf3;
     --muted: #8d96a0;
     --accent: #4493f8;
-    --mark-bg: #9e6a03;
+    --mark-bg: #b9472f;
     --mark-text: #ffffff;
-    --match-row: #2a2413;
+    --match-row: #2b1a17;
     --target-row: #1c2d41;
     color-scheme: dark;
   }
@@ -46,15 +52,28 @@ a:hover { text-decoration: underline; }
 
 .topbar {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 16px;
   flex-wrap: wrap;
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--border);
-  background: var(--surface);
+  padding: 10px 16px;
+  background: var(--brand-bg);
+  color: var(--brand-text);
+  border-bottom: 3px solid var(--brand-coral);
 }
+.topbar .muted { color: var(--brand-text); opacity: 0.75; }
+.topbar a:not(.brand) { color: var(--brand-amber); }
 
-.brand { font-weight: 700; font-size: 16px; color: var(--text); }
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  align-self: center;
+  font-weight: 700;
+  font-size: 16px;
+  color: var(--brand-text);
+}
+.brand:hover { text-decoration: none; }
+.brand img { border-radius: 6px; }
 
 .page { max-width: 1100px; margin: 0 auto; padding: 16px; }
 

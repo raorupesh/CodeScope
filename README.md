@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="images/codescope-brand/codescope-social-preview-under-1mb.jpg" alt="CodeScope: code search, built in C++" width="820">
+</p>
+
 # CodeScope
 
 [![CI](https://github.com/raorupesh/CodeScope/actions/workflows/ci.yml/badge.svg)](https://github.com/raorupesh/CodeScope/actions/workflows/ci.yml)
@@ -126,7 +130,8 @@ bench/grep_compare.sh /tmp/fmt bench/queries.txt 5
 ```
 include/codescope/   public headers (one per component)
 src/                 implementation, CLI (main.cpp), HTTP layer (http_server.cpp)
-web/                 search page and file viewer (plain HTML/CSS/JS)
+web/                 search page and file viewer (plain HTML/CSS/JS, icons)
+images/              logo and social preview artwork
 tests/               GoogleTest suites + fixtures/sample_repo
 bench/               benchmark harness, query set, grep baseline script
 docs/DESIGN.md       design notes
