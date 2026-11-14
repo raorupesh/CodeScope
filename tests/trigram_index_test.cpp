@@ -56,7 +56,7 @@ TEST_F(TrigramIndexTest, CompactPurgesRemovedIds) {
     EXPECT_EQ(index.candidates("hel"), Ids({0}));
     for (const auto& [trigram, list] : index.postings()) {
         EXPECT_FALSE(list.empty());
-        for (const DocId d : list) {
+        for (const DocId d : list.decode()) {
             EXPECT_NE(d, 1u);
         }
     }
@@ -74,6 +74,35 @@ TEST(TrigramIndex, OutOfOrderAndRepeatedAddsStaySortedUnique) {
     index.add(2, "needle");
     index.add(5, "needle");
     EXPECT_EQ(index.candidates("needle"), Ids({2, 5}));
+}
+
+TEST(PostingList, RoundTripsAndStaysSmall) {
+    // Gaps around the varint byte boundaries (128, 16384).
+    const Ids ids{0, 1, 2, 129, 130, 16514, 16515, 4000000000u, 4294967295u};
+    const PostingList list = PostingList::from_ids(ids);
+    EXPECT_EQ(list.size(), ids.size());
+    EXPECT_EQ(list.back(), 4294967295u);
+    EXPECT_EQ(list.decode(), ids);
+
+    Ids dense(1000);
+    for (DocId i = 0; i < 1000; ++i) {
+        dense[i] = i;
+    }
+    EXPECT_EQ(PostingList::from_ids(dense).bytes().size(), 1000u);  // 1 byte per id instead of 4
+}
+
+TEST(PostingList, FromBytesValidates) {
+    const PostingList good = PostingList::from_ids({3, 7, 300});
+    const auto copy = PostingList::from_bytes(good.bytes(), 3, 1000);
+    ASSERT_TRUE(copy.has_value());
+    EXPECT_EQ(*copy, good);
+
+    EXPECT_FALSE(PostingList::from_bytes(good.bytes(), 2, 1000).has_value());    // wrong count
+    EXPECT_FALSE(PostingList::from_bytes(good.bytes(), 3, 300).has_value());     // id out of range
+    EXPECT_FALSE(PostingList::from_bytes({0x80}, 1, 10).has_value());            // truncated varint
+    EXPECT_FALSE(PostingList::from_bytes({1, 0}, 2, 10).has_value());            // zero gap = duplicate
+    EXPECT_FALSE(PostingList::from_bytes({0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x01}, 1, ~0ull).has_value());  // too long
+    EXPECT_FALSE(PostingList::from_bytes({}, 0, 10).has_value());                // empty list
 }
 
 TEST(TrigramIndex, EmptyIndex) {

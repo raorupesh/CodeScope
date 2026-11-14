@@ -32,9 +32,9 @@ std::string_view strip_cr(std::string_view line) {
 // Up to `count` lines that end right before `line_start`, oldest first.
 std::vector<std::string> lines_before(const char* begin, const char* line_start, std::size_t count) {
     std::vector<std::string> out;
-    const char* cursor = line_start;  // start of the line after the one we want
+    const char* cursor = line_start;
     while (out.size() < count && cursor > begin) {
-        const char* prev_end = cursor - 1;  // the '\n' that ends the previous line
+        const char* prev_end = cursor - 1;  // '\n' ending the previous line
         const char* prev_start = prev_end;
         while (prev_start > begin && *(prev_start - 1) != '\n') {
             --prev_start;
@@ -46,8 +46,7 @@ std::vector<std::string> lines_before(const char* begin, const char* line_start,
     return out;
 }
 
-// Up to `count` lines that start right after `line_end` (which points at the
-// line's '\n' or at `end`).
+// Up to `count` lines after `line_end` (a '\n' or `end`).
 std::vector<std::string> lines_after(const char* line_end, const char* end, std::size_t count) {
     std::vector<std::string> out;
     const char* cursor = line_end;
@@ -65,9 +64,8 @@ std::vector<std::string> lines_after(const char* line_end, const char* end, std:
     return out;
 }
 
-// Appends every (non-overlapping) occurrence found by `searcher` to `out`,
-// one LineMatch per line, stopping after `limit` lines. Sets `more` when a
-// further matching line exists beyond the limit.
+// Non-overlapping matches, one LineMatch per line, up to `limit` lines;
+// `more` is set if another matching line exists.
 template <class Searcher>
 void collect_matches(std::string_view text, const Searcher& searcher, std::size_t context, std::size_t limit,
                      FileResult& out, bool& more) {
@@ -85,7 +83,6 @@ void collect_matches(std::string_view text, const Searcher& searcher, std::size_
             break;
         }
 
-        // Advance the line counter to the line containing match_begin.
         while (const auto* nl = static_cast<const char*>(
                    std::memchr(counted_upto, '\n', static_cast<std::size_t>(match_begin - counted_upto)))) {
             ++line_number;
@@ -147,7 +144,7 @@ SearchResponse QueryEngine::search(const SearchOptions& options) const {
 
     const std::string_view query = options.query;
     if (!query.empty() && options.max_results > 0) {
-        // 1. Candidates from the index (or every document for short queries).
+        // Short queries can't use the index: scan every document.
         std::vector<DocId> ids;
         if (auto candidates = index_.candidates(query)) {
             ids = std::move(*candidates);
@@ -169,7 +166,7 @@ SearchResponse QueryEngine::search(const SearchOptions& options) const {
             if (doc == nullptr || !doc->content) {
                 continue;
             }
-            // 2. Cheap filters before touching the content.
+            // Cheap filters first.
             if (!options.path_prefix.empty() && !doc->path.starts_with(options.path_prefix)) {
                 continue;
             }
@@ -178,7 +175,7 @@ SearchResponse QueryEngine::search(const SearchOptions& options) const {
                 continue;
             }
 
-            // 3. Verify: the index only says "may contain".
+            // Verify: the index only says "may contain".
             FileResult file{doc->path, {}};
             bool more = false;
             const std::size_t remaining = options.max_results - response.total_matches;

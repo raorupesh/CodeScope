@@ -25,7 +25,7 @@ SearchOptions query(const std::string& q) {
     return o;
 }
 
-// Owns a MemoryFileSource through the service while keeping a pointer to edit it.
+// The service owns the source; `repo` keeps a pointer for edits.
 struct ServiceUnderTest {
     explicit ServiceUnderTest(ServiceConfig config = {}) {
         auto source = std::make_unique<MemoryFileSource>();
@@ -93,7 +93,7 @@ TEST(SearchService, ReindexPicksUpChangesAndOldSnapshotsStayValid) {
     EXPECT_EQ(s.removed, 1u);
     EXPECT_EQ(result_paths(t.service->search(query("alpha"))), (Paths{"src/a.cpp", "src/c.cpp"}));
 
-    // A reader that grabbed the old snapshot still sees consistent old data.
+    // A reader holding the old snapshot still sees the old data.
     EXPECT_EQ(result_paths(test_util::search(*old_snapshot, "alpha")), (Paths{"src/a.cpp", "src/b.cpp"}));
 }
 

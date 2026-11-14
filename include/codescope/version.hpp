@@ -4,7 +4,7 @@
 
 namespace codescope {
 
-// Semantic version of the build, taken from project(VERSION ...) in CMakeLists.txt.
+// From project(VERSION ...) in CMakeLists.txt.
 std::string_view version() noexcept;
 
 }  // namespace codescope

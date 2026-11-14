@@ -8,6 +8,77 @@
 
 namespace codescope {
 
+void PostingList::put_varint(std::uint32_t value) {
+    while (value >= 0x80) {
+        bytes_.push_back(static_cast<std::uint8_t>(value | 0x80));
+        value >>= 7;
+    }
+    bytes_.push_back(static_cast<std::uint8_t>(value));
+}
+
+void PostingList::push_back(DocId id) {
+    put_varint(count_ == 0 ? id : id - last_);
+    last_ = id;
+    ++count_;
+}
+
+PostingList PostingList::from_ids(const std::vector<DocId>& sorted_unique) {
+    PostingList list;
+    list.bytes_.reserve(sorted_unique.size());
+    for (const DocId id : sorted_unique) {
+        list.push_back(id);
+    }
+    return list;
+}
+
+std::optional<PostingList> PostingList::from_bytes(std::vector<std::uint8_t> bytes, std::uint32_t count,
+                                                   std::uint64_t id_limit) {
+    std::uint32_t seen = 0;
+    std::uint64_t current = 0;
+    std::size_t i = 0;
+    while (i < bytes.size()) {
+        std::uint64_t value = 0;
+        int shift = 0;
+        while (true) {
+            if (i >= bytes.size() || shift > 28) {
+                return std::nullopt;  // truncated or over-long varint
+            }
+            const std::uint8_t byte = bytes[i++];
+            value |= static_cast<std::uint64_t>(byte & 0x7F) << shift;
+            if ((byte & 0x80) == 0) {
+                break;
+            }
+            shift += 7;
+        }
+        if (seen > 0 && value == 0) {
+            return std::nullopt;  // ids must be strictly increasing
+        }
+        current = seen == 0 ? value : current + value;
+        if (current >= id_limit) {
+            return std::nullopt;
+        }
+        ++seen;
+    }
+    if (seen != count || count == 0) {
+        return std::nullopt;
+    }
+    PostingList list;
+    list.bytes_ = std::move(bytes);
+    list.count_ = count;
+    list.last_ = static_cast<DocId>(current);
+    return list;
+}
+
+std::vector<DocId> PostingList::decode() const {
+    std::vector<DocId> out;
+    out.reserve(count_);
+    Reader reader(*this);
+    for (DocId id = 0; reader.next(id);) {
+        out.push_back(id);
+    }
+    return out;
+}
+
 void TrigramIndex::add(DocId doc, std::string_view content) {
     add_trigrams(doc, extract_trigrams(content));
 }
@@ -17,11 +88,14 @@ void TrigramIndex::add_trigrams(DocId doc, const std::vector<Trigram>& trigrams)
     for (const Trigram t : trigrams) {
         PostingList& list = postings_[t];
         if (list.empty() || list.back() < doc) {
-            list.push_back(doc);  // common case: ids arrive in increasing order
-        } else {
-            const auto it = std::lower_bound(list.begin(), list.end(), doc);
-            if (it == list.end() || *it != doc) {
-                list.insert(it, doc);
+            list.push_back(doc);  // common case: increasing ids
+        } else if (list.back() != doc) {
+            // Rare out-of-order insert: decode, insert, re-encode.
+            std::vector<DocId> ids = list.decode();
+            const auto it = std::lower_bound(ids.begin(), ids.end(), doc);
+            if (it == ids.end() || *it != doc) {
+                ids.insert(it, doc);
+                list = PostingList::from_ids(ids);
             }
         }
     }
@@ -36,15 +110,25 @@ void TrigramIndex::compact() {
         return;
     }
     for (auto it = postings_.begin(); it != postings_.end();) {
-        PostingList& list = it->second;
-        std::erase_if(list, [this](DocId d) { return removed_.contains(d); });
-        if (list.empty()) {
+        std::vector<DocId> ids = it->second.decode();
+        const std::size_t before = ids.size();
+        std::erase_if(ids, [this](DocId d) { return removed_.contains(d); });
+        if (ids.empty()) {
             it = postings_.erase(it);
-        } else {
-            ++it;
+            continue;
         }
+        if (ids.size() != before) {
+            it->second = PostingList::from_ids(ids);
+        }
+        ++it;
     }
     removed_.clear();
+}
+
+void TrigramIndex::shrink_to_fit() {
+    for (auto& [trigram, list] : postings_) {
+        list.shrink_to_fit();
+    }
 }
 
 std::optional<std::vector<DocId>> TrigramIndex::candidates(std::string_view query) const {
@@ -53,7 +137,7 @@ std::optional<std::vector<DocId>> TrigramIndex::candidates(std::string_view quer
         return std::nullopt;
     }
 
-    // Gather the posting lists; a missing trigram means no document matches.
+    // A missing trigram means nothing matches.
     std::vector<const PostingList*> lists;
     lists.reserve(trigrams.size());
     for (const Trigram t : trigrams) {
@@ -64,21 +148,31 @@ std::optional<std::vector<DocId>> TrigramIndex::candidates(std::string_view quer
         lists.push_back(&it->second);
     }
 
-    // Intersect shortest first: the running result can only shrink, so
-    // starting small keeps every step O(|result| + |next list|).
+    // Shortest first: the result only shrinks.
     std::sort(lists.begin(), lists.end(),
               [](const PostingList* a, const PostingList* b) { return a->size() < b->size(); });
 
-    std::vector<DocId> result;
-    result.reserve(lists.front()->size());
-    std::copy_if(lists.front()->begin(), lists.front()->end(), std::back_inserter(result),
-                 [this](DocId d) { return !removed_.contains(d); });
+    std::vector<DocId> result = lists.front()->decode();
+    std::erase_if(result, [this](DocId d) { return removed_.contains(d); });
 
+    // Merge further lists straight from their encoded bytes.
     std::vector<DocId> scratch;
     for (std::size_t i = 1; i < lists.size() && !result.empty(); ++i) {
         scratch.clear();
-        std::set_intersection(result.begin(), result.end(), lists[i]->begin(), lists[i]->end(),
-                              std::back_inserter(scratch));
+        PostingList::Reader reader(*lists[i]);
+        DocId next = 0;
+        bool more = reader.next(next);
+        for (const DocId d : result) {
+            while (more && next < d) {
+                more = reader.next(next);
+            }
+            if (!more) {
+                break;
+            }
+            if (next == d) {
+                scratch.push_back(d);
+            }
+        }
         result.swap(scratch);
     }
     return result;
@@ -87,7 +181,7 @@ std::optional<std::vector<DocId>> TrigramIndex::candidates(std::string_view quer
 std::size_t TrigramIndex::memory_bytes() const {
     std::size_t bytes = 0;
     for (const auto& [trigram, list] : postings_) {
-        bytes += sizeof(trigram) + sizeof(list) + list.capacity() * sizeof(DocId);
+        bytes += sizeof(trigram) + sizeof(list) + list.memory_bytes();
     }
     return bytes;
 }

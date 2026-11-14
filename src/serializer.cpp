@@ -1,11 +1,14 @@
 #include "codescope/serializer.hpp"
 
+#include "codescope/path_utils.hpp"
+
 #include <algorithm>
 #include <array>
 #include <cstring>
 #include <fstream>
 #include <iterator>
 #include <limits>
+#include <optional>
 #include <stdexcept>
 #include <string_view>
 #include <system_error>
@@ -106,8 +109,7 @@ void IndexSerializer::save(const IndexSnapshot& snapshot, const fs::path& file) 
     const DocStore& docs = snapshot.docs;
     const TrigramIndex& index = snapshot.index;
 
-    // Dense renumbering of live documents. The mapping is monotonic, so
-    // remapped posting lists stay sorted.
+    // Renumber live docs densely; monotonic, so lists stay sorted.
     const std::vector<DocId> live = docs.live_ids();
     std::unordered_map<DocId, DocId> remap;
     remap.reserve(live.size());
@@ -115,7 +117,6 @@ void IndexSerializer::save(const IndexSnapshot& snapshot, const fs::path& file) 
         remap.emplace(live[i], static_cast<DocId>(i));
     }
 
-    // Deterministic output: trigrams in ascending order.
     std::vector<Trigram> trigrams;
     trigrams.reserve(index.trigram_count());
     for (const auto& entry : index.postings()) {
@@ -129,7 +130,7 @@ void IndexSerializer::save(const IndexSnapshot& snapshot, const fs::path& file) 
     {
         std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
         if (!out) {
-            throw std::runtime_error("cannot write " + tmp.string());
+            throw std::runtime_error("cannot write " + to_utf8(tmp));
         }
         Writer w(out);
         w.bytes(kMagic.data(), kMagic.size());
@@ -143,14 +144,21 @@ void IndexSerializer::save(const IndexSnapshot& snapshot, const fs::path& file) 
             w.u64(doc->size);
         }
 
-        // Count non-empty lists first so trigram_count is exact.
-        std::vector<std::vector<DocId>> lists;
+        // Dense ids: copy the encoded bytes; otherwise decode, renumber, re-encode.
+        const bool identity = live.size() == docs.slot_count() && index.removed_count() == 0;
+        std::vector<PostingList> lists;
         std::vector<Trigram> kept;
         lists.reserve(trigrams.size());
         kept.reserve(trigrams.size());
         for (const Trigram t : trigrams) {
+            const PostingList& source = index.postings().at(t);
+            if (identity) {
+                kept.push_back(t);
+                lists.push_back(source);
+                continue;
+            }
             std::vector<DocId> mapped;
-            for (const DocId id : index.postings().at(t)) {
+            for (const DocId id : source.decode()) {
                 if (index.is_removed(id)) {
                     continue;
                 }
@@ -161,17 +169,17 @@ void IndexSerializer::save(const IndexSnapshot& snapshot, const fs::path& file) 
             }
             if (!mapped.empty()) {
                 kept.push_back(t);
-                lists.push_back(std::move(mapped));
+                lists.push_back(PostingList::from_ids(mapped));
             }
         }
 
         w.u32(checked_u32(kept.size(), "trigrams"));
         for (std::size_t i = 0; i < kept.size(); ++i) {
+            const std::vector<std::uint8_t>& bytes = lists[i].bytes();
             w.u32(kept[i]);
-            w.u32(checked_u32(lists[i].size(), "posting list"));
-            for (const DocId id : lists[i]) {
-                w.u32(id);
-            }
+            w.u32(lists[i].size());
+            w.u32(checked_u32(bytes.size(), "posting list"));
+            w.bytes(bytes.data(), bytes.size());
         }
 
         out.flush();
@@ -179,7 +187,7 @@ void IndexSerializer::save(const IndexSnapshot& snapshot, const fs::path& file) 
             out.close();
             std::error_code ec;
             fs::remove(tmp, ec);
-            throw std::runtime_error("write failed: " + tmp.string());
+            throw std::runtime_error("write failed: " + to_utf8(tmp));
         }
     }
 
@@ -188,14 +196,14 @@ void IndexSerializer::save(const IndexSnapshot& snapshot, const fs::path& file) 
     if (ec) {
         const std::string reason = ec.message();
         fs::remove(tmp, ec);
-        throw std::runtime_error("cannot replace " + file.string() + ": " + reason);
+        throw std::runtime_error("cannot replace " + to_utf8(file) + ": " + reason);
     }
 }
 
 std::shared_ptr<IndexSnapshot> IndexSerializer::load(const fs::path& file, std::string* error) {
     std::ifstream in(file, std::ios::binary);
     if (!in) {
-        return fail(error, "cannot open " + file.string());
+        return fail(error, "cannot open " + to_utf8(file));
     }
     const std::string data{std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
     Reader r(data);
@@ -212,7 +220,7 @@ std::shared_ptr<IndexSnapshot> IndexSerializer::load(const fs::path& file, std::
     auto snap = std::make_shared<IndexSnapshot>();
 
     const std::uint32_t doc_count = r.u32();
-    // Each doc needs at least 4 + 8 + 8 bytes; reject absurd counts early.
+    // Reject impossible counts early (each doc needs >= 20 bytes).
     if (!r.ok() || static_cast<std::uint64_t>(doc_count) * 20 > r.remaining()) {
         return fail(error, "truncated document table");
     }
@@ -230,26 +238,27 @@ std::shared_ptr<IndexSnapshot> IndexSerializer::load(const fs::path& file, std::
     }
 
     const std::uint32_t trigram_count = r.u32();
-    if (!r.ok() || static_cast<std::uint64_t>(trigram_count) * 8 > r.remaining()) {
+    // Each entry needs >= 13 bytes.
+    if (!r.ok() || static_cast<std::uint64_t>(trigram_count) * 13 > r.remaining()) {
         return fail(error, "truncated trigram table");
     }
     std::unordered_set<Trigram> seen_trigrams;
     seen_trigrams.reserve(trigram_count);
     for (std::uint32_t i = 0; i < trigram_count; ++i) {
         const Trigram t = r.u32();
-        const std::uint32_t len = r.u32();
-        if (!r.ok() || t > 0xFFFFFFu || len == 0 || static_cast<std::uint64_t>(len) * 4 > r.remaining() ||
+        const std::uint32_t count = r.u32();
+        const std::uint32_t byte_len = r.u32();
+        if (!r.ok() || t > 0xFFFFFFu || count == 0 || byte_len < count || byte_len > r.remaining() ||
             !seen_trigrams.insert(t).second) {
             return fail(error, "corrupt trigram entry");
         }
-        std::vector<DocId> list(len);
-        for (std::uint32_t j = 0; j < len; ++j) {
-            list[j] = r.u32();
-            if (list[j] >= doc_count || (j > 0 && list[j] <= list[j - 1])) {
-                return fail(error, "corrupt posting list");
-            }
+        const std::string_view raw = r.bytes(byte_len);
+        std::optional<PostingList> list =
+            PostingList::from_bytes(std::vector<std::uint8_t>(raw.begin(), raw.end()), count, doc_count);
+        if (!list) {
+            return fail(error, "corrupt posting list");
         }
-        snap->index.set_postings(t, std::move(list));
+        snap->index.set_postings(t, std::move(*list));
     }
 
     if (!r.ok() || r.remaining() != 0) {
