@@ -12,6 +12,17 @@ CMakeUserPresets.json
 .idea/
 *.swp
 
-# CodeScope runtime artifacts
+# Runtime artifacts
 index.bin
 index.tmp
+*.stackdump
+
+# Local secrets, never committed
+.env
+.env.*
+*.pem
+*.key
+
+# Python
+__pycache__/
+*.pyc

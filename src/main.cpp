@@ -12,6 +12,7 @@
 
 #include "codescope/file_source.hpp"
 #include "codescope/http_server.hpp"
+#include "codescope/path_utils.hpp"
 #include "codescope/search_service.hpp"
 #include "codescope/version.hpp"
 
@@ -29,6 +30,7 @@ void print_usage(std::ostream& out) {
            "\n"
            "commands:\n"
            "  search <repo> <query> [options]   print matching lines (grep-like)\n"
+           "  def    <repo> <symbol>            where a C/C++ symbol is defined\n"
            "  index  <repo> --index FILE        build or update the saved index\n"
            "  serve  <repo> [options]           start the REST API + web UI\n"
            "\n"
@@ -43,6 +45,7 @@ void print_usage(std::ostream& out) {
            "  --host HOST         address to bind (default 127.0.0.1)\n"
            "  --port N            port to listen on (default 8080)\n"
            "  --web DIR           directory with the web UI (default: built-in path)\n"
+           "  --allow-host LIST   extra Host names to accept besides localhost (\"*\" = any)\n"
            "\n"
            "common options:\n"
            "  --index FILE        load/save the index at FILE (serve default: index.bin)\n"
@@ -63,6 +66,7 @@ struct Args {
     std::string host = "127.0.0.1";
     int port = 8080;
     std::optional<fs::path> web_dir;
+    std::vector<std::string> allow_hosts;
 };
 
 struct UsageError {
@@ -137,6 +141,9 @@ Args parse_args(int argc, char* argv[]) {
             args.port = static_cast<int>(port);
         } else if (arg == "--web") {
             args.web_dir = fs::path(std::string(value()));
+        } else if (arg == "--allow-host") {
+            const std::vector<std::string> hosts = split_list(value());
+            args.allow_hosts.insert(args.allow_hosts.end(), hosts.begin(), hosts.end());
         } else if (arg.starts_with("--")) {
             throw UsageError{"unknown option " + std::string(arg)};
         } else {
@@ -157,13 +164,6 @@ std::unique_ptr<SearchService> open_service(const std::string& repo, ServiceConf
     return std::make_unique<SearchService>(std::make_unique<FilesystemSource>(repo), std::move(config));
 }
 
-void report_service_error(const SearchService& service) {
-    const std::string error = service.stats().last_error;
-    if (!error.empty()) {
-        std::cerr << "codescope: " << error << '\n';
-    }
-}
-
 int cmd_search(Args& args) {
     if (args.positional.size() != 2) {
         throw UsageError{"search needs <repo> <query>"};
@@ -171,7 +171,6 @@ int cmd_search(Args& args) {
     args.search.query = args.positional[1];
     auto service = open_service(args.positional[0], args.config);
     const IngestStats ingest = service->initialize();
-    report_service_error(*service);
 
     const SearchResponse response = service->search(args.search);
     for (const FileResult& file : response.results) {
@@ -197,6 +196,20 @@ int cmd_search(Args& args) {
     return response.total_matches > 0 ? 0 : 1;
 }
 
+int cmd_def(Args& args) {
+    if (args.positional.size() != 2) {
+        throw UsageError{"def needs <repo> <symbol>"};
+    }
+    auto service = open_service(args.positional[0], args.config);
+    service->initialize();
+    const std::vector<Definition> defs = service->definitions(args.positional[1]);
+    for (const Definition& d : defs) {
+        std::cout << d.path << ':' << d.line << ": [" << d.kind << "] " << d.text << '\n';
+    }
+    std::cerr << defs.size() << " definition(s) of " << args.positional[1] << '\n';
+    return defs.empty() ? 1 : 0;
+}
+
 int cmd_index(Args& args) {
     if (args.positional.size() != 1) {
         throw UsageError{"index needs <repo>"};
@@ -210,7 +223,6 @@ int cmd_index(Args& args) {
     const ServiceStats stats = service->stats();
     std::cout << stats.docs << " documents, " << stats.trigrams << " trigrams"
               << (stats.loaded_from_disk ? " (updated saved index)" : "") << '\n';
-    report_service_error(*service);
     return stats.last_error.empty() ? 0 : 1;
 }
 
@@ -226,16 +238,19 @@ int cmd_serve(Args& args) {
     fs::path web = args.web_dir.value_or(fs::path(CODESCOPE_DEFAULT_WEB_DIR));
     std::error_code ec;
     if (!fs::is_directory(web, ec)) {
-        std::cerr << "codescope: web UI directory not found (" << web.string()
+        std::cerr << "codescope: web UI directory not found (" << to_utf8(web)
                   << "); serving the API only. Use --web DIR.\n";
     }
 
     auto service = open_service(args.positional[0], args.config);
     std::cerr << "codescope: indexing " << args.positional[0] << " ...\n";
     print_ingest(service->initialize(), std::cerr);
-    report_service_error(*service);
 
-    HttpServer server(*service, web);
+    std::vector<std::string> hosts = args.allow_hosts;
+    if (args.host != "0.0.0.0" && args.host != "::") {
+        hosts.push_back(args.host);  // binding to a specific address implies accepting it
+    }
+    HttpServer server(*service, web, hosts);
     const int port = server.bind(args.host, args.port);
     if (port < 0) {
         std::cerr << "codescope: cannot listen on " << args.host << ':' << args.port << '\n';
@@ -267,6 +282,9 @@ int main(int argc, char* argv[]) {
         Args args = parse_args(argc, argv);
         if (cmd == "search") {
             return cmd_search(args);
+        }
+        if (cmd == "def") {
+            return cmd_def(args);
         }
         if (cmd == "index") {
             return cmd_index(args);

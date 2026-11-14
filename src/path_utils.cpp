@@ -8,6 +8,11 @@
 
 namespace codescope {
 
+std::string to_utf8(const std::filesystem::path& p) {
+    const std::u8string text = p.generic_u8string();
+    return std::string(text.begin(), text.end());
+}
+
 std::optional<std::string> normalize_repo_path(std::string_view path) {
     if (path.empty() || path.find('\0') != std::string_view::npos) {
         return std::nullopt;

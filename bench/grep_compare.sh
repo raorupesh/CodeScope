@@ -1,15 +1,12 @@
 #!/usr/bin/env bash
-# Baseline for the README: time `grep -r` on the same queries codescope_bench uses.
-#
+# Baseline for the README: median `grep -r` time per query in queries.txt.
 #   bench/grep_compare.sh <repo> [queries-file] [runs]
-#
-# Each query runs `runs` times (default 5); the median wall time is reported.
-# grep scans every file on every query, which is what the trigram index avoids.
 set -euo pipefail
 
 repo=${1:?usage: grep_compare.sh <repo> [queries-file] [runs]}
 queries=${2:-"$(dirname "$0")/queries.txt"}
 runs=${3:-5}
+[[ "$runs" =~ ^[1-9][0-9]*$ ]] || { echo "runs must be a positive integer" >&2; exit 2; }
 
 excludes=(--exclude-dir=.git --exclude-dir=.hg --exclude-dir=.svn --exclude-dir=node_modules
           --exclude-dir=build --exclude-dir=third_party)

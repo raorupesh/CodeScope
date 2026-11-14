@@ -1,12 +1,7 @@
 #pragma once
 
-// Facade used by the CLI and the HTTP layer.
-//
-// Concurrency model: searches take a shared_ptr copy of the current snapshot
-// (under a mutex held only for the pointer copy) and run without locks.
-// Re-indexing builds a new snapshot off to the side and swaps the pointer.
-// A search never sees a half-built index, and the snapshot it holds stays
-// alive (so its string_views stay valid) until the search finishes.
+// Facade for the CLI and HTTP layer. Searches copy the current snapshot
+// pointer and run lock-free; re-indexing builds a new snapshot and swaps it in.
 
 #include <atomic>
 #include <cstdint>
@@ -37,15 +32,24 @@ struct FileView {
     std::vector<std::string> lines;
 };
 
+struct Definition {
+    std::string path;
+    std::uint32_t line = 0;
+    std::string kind;
+    std::string qualified;
+    std::string text;  // the source line, trimmed
+};
+
 struct ServiceStats {
     std::size_t docs = 0;
     std::size_t trigrams = 0;
-    std::size_t index_bytes = 0;    // approximate posting-list memory
+    std::size_t index_bytes = 0;  // approximate posting-list memory
     std::uint64_t content_bytes = 0;
-    IngestStats last_run;           // stats of the most recent (re)index
+    std::size_t symbols = 0;
+    IngestStats last_run;
     bool reindexing = false;
-    bool loaded_from_disk = false;  // startup reused a saved index
-    std::uint64_t generation = 0;   // number of snapshots published
+    bool loaded_from_disk = false;
+    std::uint64_t generation = 0;  // snapshots published
     std::string last_error;
 };
 
@@ -57,25 +61,23 @@ public:
     SearchService(const SearchService&) = delete;
     SearchService& operator=(const SearchService&) = delete;
 
-    // Loads the saved index if one is configured and valid, then runs an
-    // incremental pass so the result matches the files on disk.
+    // Loads the saved index (if any), then brings it up to date.
     IngestStats initialize();
 
-    // Synchronous incremental re-index: build, swap, save.
     IngestStats reindex();
 
-    // Runs reindex() on a background thread. Returns false (and does
-    // nothing) if a background re-index is already running.
+    // False if a background re-index is already running.
     bool reindex_async();
 
     bool reindexing() const { return reindexing_.load(); }
 
     SearchResponse search(const SearchOptions& options) const;
 
-    // `path` is normalized and must name an indexed file; std::nullopt
-    // otherwise. Content comes from the in-memory snapshot, never from a
-    // client-controlled filesystem path.
+    // Served from memory; std::nullopt for invalid or unindexed paths.
     std::optional<FileView> file(std::string_view path) const;
+
+    // Types first, then functions; at most `limit`.
+    std::vector<Definition> definitions(std::string_view symbol, std::size_t limit = 50) const;
 
     ServiceStats stats() const;
 

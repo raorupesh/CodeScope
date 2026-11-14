@@ -17,7 +17,7 @@
 
   <main class="page">
     <form id="search-form" class="search" autocomplete="off" role="search">
-      <input id="q" name="q" type="search" placeholder="Search code (literal substring)…" autofocus
+      <input id="q" name="q" type="search" placeholder="Search code (literal substring)…   press / to focus" autofocus
              aria-label="Search query">
       <div class="filters">
         <label class="check"><input id="case" type="checkbox"> Match case</label>
@@ -28,7 +28,23 @@
     </form>
 
     <p id="status" class="status muted" aria-live="polite"></p>
+
+    <section id="empty" class="empty" hidden>
+      <h2>Search the indexed code</h2>
+      <p>Type any part of an identifier or line. Matching is literal and case-insensitive unless
+         <em>Match case</em> is on. For a C/C++ name, the places it is defined are listed above the results.</p>
+      <p>Try:
+        <a href="#" data-example="namespace">namespace</a> ·
+        <a href="#" data-example="TODO">TODO</a> ·
+        <a href="#" data-example="#include">#include</a>
+      </p>
+      <p class="muted">Keyboard: <kbd>/</kbd> search · <kbd>↓</kbd> <kbd>↑</kbd> move between matches ·
+         <kbd>Enter</kbd> open · <kbd>Esc</kbd> back to search</p>
+    </section>
+
+    <section id="definitions" class="definitions" hidden aria-label="Definitions"></section>
     <section id="results" class="results"></section>
+    <button id="more" type="button" class="more" hidden>Show more results</button>
   </main>
 
   <script src="common.js"></script>

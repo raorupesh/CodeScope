@@ -1,7 +1,5 @@
 #pragma once
 
-// Core value types shared across CodeScope.
-
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -11,23 +9,23 @@
 namespace codescope {
 
 using DocId   = std::uint32_t;
-using Trigram = std::uint32_t;  // 3 bytes packed: (b0 << 16) | (b1 << 8) | b2
+using Trigram = std::uint32_t;  // (b0 << 16) | (b1 << 8) | b2
 
 struct SearchOptions {
     std::string query;
     bool case_sensitive = false;
-    std::vector<std::string> extensions;  // e.g. {".cpp", ".hpp"}; empty = any
-    std::string path_prefix;              // e.g. "src/"; empty = any
-    std::size_t max_results = 200;        // cap on the total number of matching lines
-    std::size_t context_lines = 1;        // lines of context above and below each match
+    std::vector<std::string> extensions;  // empty = any
+    std::string path_prefix;              // empty = any
+    std::size_t max_results = 200;        // matching lines
+    std::size_t context_lines = 1;
 };
 
 struct LineMatch {
     std::uint32_t line_number = 0;  // 1-based
     std::string line;
-    std::vector<std::pair<std::uint32_t, std::uint32_t>> ranges;  // [start, end) byte offsets in `line`
-    std::vector<std::string> before;  // context lines immediately above (oldest first)
-    std::vector<std::string> after;   // context lines immediately below
+    std::vector<std::pair<std::uint32_t, std::uint32_t>> ranges;  // [start, end) byte offsets
+    std::vector<std::string> before;
+    std::vector<std::string> after;
 };
 
 struct FileResult {
@@ -37,10 +35,10 @@ struct FileResult {
 
 struct SearchResponse {
     std::vector<FileResult> results;
-    std::size_t total_matches = 0;  // matching lines returned
-    bool truncated = false;         // true if max_results cut the search short
-    bool used_index = true;         // false when the query was too short for trigrams (full scan)
-    std::size_t candidates = 0;     // documents that passed the trigram filter
+    std::size_t total_matches = 0;
+    bool truncated = false;
+    bool used_index = true;      // false: query too short, full scan
+    std::size_t candidates = 0;  // docs that passed the trigram filter
     double took_ms = 0.0;
 };
 

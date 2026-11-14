@@ -27,12 +27,19 @@ void DocStore::remove(DocId id) {
         by_path_.erase(it);
     }
     doc.removed = true;
-    doc.content.reset();  // release memory; the tombstone keeps only metadata
+    doc.content.reset();  // tombstone keeps metadata only
+    doc.symbols.reset();
 }
 
 void DocStore::set_content(DocId id, std::shared_ptr<const std::string> content) {
     if (id < docs_.size() && !docs_[id].removed) {
         docs_[id].content = std::move(content);
+    }
+}
+
+void DocStore::set_symbols(DocId id, std::shared_ptr<const std::vector<Symbol>> symbols) {
+    if (id < docs_.size() && !docs_[id].removed) {
+        docs_[id].symbols = std::move(symbols);
     }
 }
 

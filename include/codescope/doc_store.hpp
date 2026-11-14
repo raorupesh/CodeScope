@@ -1,11 +1,5 @@
 #pragma once
 
-// Document metadata and content, addressed by DocId.
-//
-// Content is kept in memory (shared_ptr<const std::string>) so verification
-// never touches the disk and snapshots can share unchanged file contents
-// cheaply. Removed documents leave a tombstone so DocIds stay stable.
-
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -15,42 +9,37 @@
 #include <unordered_map>
 #include <vector>
 
+#include "codescope/symbols.hpp"
 #include "codescope/types.hpp"
 
 namespace codescope {
 
+// Contents are shared_ptr so snapshots share unchanged files.
 struct Document {
     std::string path;  // repository-relative, '/' separators
     std::int64_t mtime = 0;
     std::uint64_t size = 0;
     std::shared_ptr<const std::string> content;  // null until loaded
+    std::shared_ptr<const std::vector<Symbol>> symbols;
     bool removed = false;
 };
 
+// Removed documents keep their slot (tombstone) so DocIds stay stable.
 class DocStore {
 public:
-    // Appends a document and returns its id (ids are assigned in increasing
-    // order). Any live document with the same path must be removed first.
-    DocId add(Document doc);
-
-    // Tombstones `id`; it keeps its slot but is no longer findable.
+    DocId add(Document doc);  // ids increase; remove any live doc with the same path first
     void remove(DocId id);
 
     void set_content(DocId id, std::shared_ptr<const std::string> content);
+    void set_symbols(DocId id, std::shared_ptr<const std::vector<Symbol>> symbols);
 
-    // nullptr if `id` is out of range or removed.
-    const Document* get(DocId id) const;
-
+    const Document* get(DocId id) const;  // nullptr if out of range or removed
     std::optional<DocId> find(std::string_view path) const;
 
     std::size_t live_count() const { return by_path_.size(); }
     std::size_t slot_count() const { return docs_.size(); }
-
-    // Total bytes of loaded content across live documents.
     std::uint64_t content_bytes() const;
-
-    // Live document ids in ascending order.
-    std::vector<DocId> live_ids() const;
+    std::vector<DocId> live_ids() const;  // ascending
 
 private:
     std::vector<Document> docs_;

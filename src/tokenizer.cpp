@@ -21,8 +21,7 @@ std::vector<Trigram> extract_trigrams(std::string_view text) {
     for (std::size_t i = 0; i + 2 < text.size(); ++i) {
         out.push_back(pack_trigram(ascii_lower(text[i]), ascii_lower(text[i + 1]), ascii_lower(text[i + 2])));
     }
-    // Sort + unique is faster than a hash set for the typical file size and
-    // leaves the result sorted, which the index relies on.
+    // Sort + unique: faster than a hash set, and the index needs sorted output.
     std::sort(out.begin(), out.end());
     out.erase(std::unique(out.begin(), out.end()), out.end());
     return out;
