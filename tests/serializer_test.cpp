@@ -118,6 +118,16 @@ TEST_F(SerializerTest, TruncatedFileIsRejected) {
     }
 }
 
+TEST_F(SerializerTest, VersionOneFilesAreRejectedForRebuild) {
+    IndexSerializer::save(*IngestPipeline(repo).run(nullptr), file);
+    std::string bytes = read_file();
+    bytes[4] = 1;  // the old fixed-width format
+    write_file(bytes);
+    std::string error;
+    EXPECT_EQ(IndexSerializer::load(file, &error), nullptr);
+    EXPECT_EQ(error, "unsupported version 1");
+}
+
 TEST_F(SerializerTest, TrailingGarbageIsRejected) {
     IndexSerializer::save(*IngestPipeline(repo).run(nullptr), file);
     write_file(read_file() + "junk");

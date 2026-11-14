@@ -4,6 +4,7 @@
 #include <charconv>
 #include <cmath>
 #include <exception>
+#include <iostream>
 #include <string_view>
 #include <system_error>
 #include <utility>
@@ -21,12 +22,37 @@ using nlohmann::json;
 
 constexpr std::size_t kMaxLimit = 5000;
 constexpr std::size_t kMaxContext = 10;
+constexpr std::size_t kMaxBodyBytes = 64 * 1024;
+
+std::string lower(std::string_view s) {
+    std::string out(s);
+    for (char& c : out) {
+        if (c >= 'A' && c <= 'Z') {
+            c = static_cast<char>(c - 'A' + 'a');
+        }
+    }
+    return out;
+}
+
+// "Host: example.com:8080" -> "example.com"; "[::1]:8080" -> "[::1]".
+std::string host_name(std::string_view host) {
+    if (host.starts_with('[')) {
+        const std::size_t close = host.find(']');
+        return lower(close == std::string_view::npos ? host : host.substr(0, close + 1));
+    }
+    return lower(host.substr(0, host.find(':')));
+}
+
+// "http://example.com:8080" -> "example.com:8080".
+std::string origin_authority(std::string_view origin) {
+    const std::size_t scheme = origin.find("://");
+    return lower(scheme == std::string_view::npos ? origin : origin.substr(scheme + 3));
+}
 
 void send_json(httplib::Response& res, int status, const json& body) {
     res.status = status;
     res.set_header("Cache-Control", "no-store");
-    // Source files are not guaranteed to be valid UTF-8; replace bad bytes
-    // instead of throwing.
+    // Source files may not be valid UTF-8: replace bad bytes rather than throw.
     res.set_content(body.dump(-1, ' ', false, json::error_handler_t::replace), "application/json");
 }
 
@@ -118,6 +144,7 @@ json stats_json(const ServiceStats& s) {
         {"trigrams", s.trigrams},
         {"index_bytes", s.index_bytes},
         {"content_bytes", s.content_bytes},
+        {"symbols", s.symbols},
         {"last_index_ms", round3(r.elapsed_ms)},
         {"files_seen", r.files_seen},
         {"indexed", r.indexed},
@@ -128,7 +155,7 @@ json stats_json(const ServiceStats& s) {
         {"reindexing", s.reindexing},
         {"loaded_from_disk", s.loaded_from_disk},
         {"generation", s.generation},
-        {"last_error", s.last_error},
+        {"last_error", s.last_error.empty() ? "" : "see the server log"},  // details may contain paths
     };
 }
 
@@ -137,8 +164,30 @@ json stats_json(const ServiceStats& s) {
 struct HttpServer::Impl {
     SearchService& service;
     httplib::Server server;
+    std::vector<std::string> allowed_hosts;  // empty or "*" entry: any host
 
-    explicit Impl(SearchService& svc) : service(svc) {}
+    Impl(SearchService& svc, std::vector<std::string> hosts) : service(svc), allowed_hosts(std::move(hosts)) {}
+
+    // Blocks DNS rebinding (an attacker's domain resolving to 127.0.0.1).
+    bool host_allowed(const httplib::Request& req) const {
+        if (std::find(allowed_hosts.begin(), allowed_hosts.end(), "*") != allowed_hosts.end()) {
+            return true;
+        }
+        if (!req.has_header("Host")) {
+            return false;
+        }
+        const std::string name = host_name(req.get_header_value("Host"));
+        return std::any_of(allowed_hosts.begin(), allowed_hosts.end(),
+                           [&name](const std::string& allowed) { return lower(allowed) == name; });
+    }
+
+    // Blocks cross-site POSTs: Origin, when sent, must match Host.
+    static bool origin_allowed(const httplib::Request& req) {
+        if (req.method != "POST" || !req.has_header("Origin")) {
+            return true;
+        }
+        return origin_authority(req.get_header_value("Origin")) == lower(req.get_header_value("Host"));
+    }
 
     void handle_search(const httplib::Request& req, httplib::Response& res) const {
         SearchOptions options;
@@ -179,6 +228,24 @@ struct HttpServer::Impl {
         send_json(res, 200, search_json(options, service.search(options)));
     }
 
+    void handle_definition(const httplib::Request& req, httplib::Response& res) const {
+        const std::string symbol = req.get_param_value("symbol");
+        const bool valid = !symbol.empty() && symbol.size() <= 200 &&
+                           std::all_of(symbol.begin(), symbol.end(), [](char c) {
+                               return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
+                                      c == '_' || c == ':' || c == '~';
+                           });
+        if (!valid) {
+            send_error(res, 400, "'symbol' must be a C/C++ identifier, optionally qualified (a::b)");
+            return;
+        }
+        json defs = json::array();
+        for (const Definition& d : service.definitions(symbol)) {
+            defs.push_back(json{{"path", d.path}, {"line", d.line}, {"kind", d.kind}, {"name", d.qualified}, {"text", d.text}});
+        }
+        send_json(res, 200, json{{"symbol", symbol}, {"definitions", std::move(defs)}});
+    }
+
     void handle_file(const httplib::Request& req, httplib::Response& res) const {
         const std::string path = req.get_param_value("path");
         if (path.empty()) {
@@ -191,17 +258,43 @@ struct HttpServer::Impl {
         }
         const std::optional<FileView> view = service.file(path);
         if (!view) {
-            send_error(res, 404, "file not indexed: " + path);
+            send_error(res, 404, "file not indexed");
             return;
         }
         send_json(res, 200, json{{"path", view->path}, {"language", view->language}, {"lines", view->lines}});
     }
 };
 
-HttpServer::HttpServer(SearchService& service, std::optional<std::filesystem::path> web_root)
-    : impl_(std::make_unique<Impl>(service)) {
+HttpServer::HttpServer(SearchService& service, std::optional<std::filesystem::path> web_root,
+                       std::vector<std::string> extra_hosts)
+    : impl_(nullptr) {
+    std::vector<std::string> hosts{"localhost", "127.0.0.1", "[::1]"};
+    hosts.insert(hosts.end(), extra_hosts.begin(), extra_hosts.end());
+    impl_ = std::make_unique<Impl>(service, std::move(hosts));
     httplib::Server& svr = impl_->server;
     Impl* impl = impl_.get();
+
+    svr.set_payload_max_length(kMaxBodyBytes);
+    svr.set_default_headers({
+        {"X-Content-Type-Options", "nosniff"},
+        {"X-Frame-Options", "DENY"},
+        {"Referrer-Policy", "no-referrer"},
+        {"Cross-Origin-Resource-Policy", "same-origin"},
+        {"Content-Security-Policy",
+         "default-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; "
+         "form-action 'self'; frame-ancestors 'none'"},
+    });
+    svr.set_pre_routing_handler([impl](const httplib::Request& req, httplib::Response& res) {
+        if (!impl->host_allowed(req)) {
+            send_error(res, 403, "host not allowed; start the server with --allow-host to permit it");
+            return httplib::Server::HandlerResponse::Handled;
+        }
+        if (!Impl::origin_allowed(req)) {
+            send_error(res, 403, "cross-origin request rejected");
+            return httplib::Server::HandlerResponse::Handled;
+        }
+        return httplib::Server::HandlerResponse::Unhandled;
+    });
 
     svr.Get("/health", [](const httplib::Request&, httplib::Response& res) {
         send_json(res, 200, json{{"status", "ok"}});
@@ -212,6 +305,9 @@ HttpServer::HttpServer(SearchService& service, std::optional<std::filesystem::pa
     svr.Get("/api/file", [impl](const httplib::Request& req, httplib::Response& res) {
         impl->handle_file(req, res);
     });
+    svr.Get("/api/definition", [impl](const httplib::Request& req, httplib::Response& res) {
+        impl->handle_definition(req, res);
+    });
     svr.Get("/api/stats", [impl](const httplib::Request&, httplib::Response& res) {
         send_json(res, 200, stats_json(impl->service.stats()));
     });
@@ -220,23 +316,24 @@ HttpServer::HttpServer(SearchService& service, std::optional<std::filesystem::pa
         send_json(res, 202, json{{"status", started ? "started" : "already_running"}});
     });
 
-    svr.set_exception_handler([](const httplib::Request&, httplib::Response& res, std::exception_ptr ep) {
-        std::string message = "internal error";
+    // Details are logged, not returned: they can contain local paths.
+    svr.set_exception_handler([](const httplib::Request& req, httplib::Response& res, std::exception_ptr ep) {
         try {
             if (ep) {
                 std::rethrow_exception(ep);
             }
         } catch (const std::exception& e) {
-            message = e.what();
+            std::cerr << "codescope: error handling " << req.path << ": " << e.what() << '\n';
         } catch (...) {
+            std::cerr << "codescope: unknown error handling " << req.path << '\n';
         }
-        send_error(res, 500, message);
+        send_error(res, 500, "internal error");
     });
 
     if (web_root) {
         std::error_code ec;
         if (std::filesystem::is_directory(*web_root, ec)) {
-            svr.set_mount_point("/", web_root->string());
+            svr.set_mount_point("/", to_utf8(*web_root));
         }
     }
 }

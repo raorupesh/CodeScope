@@ -7,6 +7,7 @@ add_executable(codescope_tests
     serializer_test.cpp
     path_utils_test.cpp
     file_source_test.cpp
+    symbols_test.cpp
     search_service_test.cpp
     http_api_test.cpp
 )

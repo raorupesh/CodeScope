@@ -1,8 +1,8 @@
 #pragma once
 
-// Shared helpers for the unit tests: an in-memory fake repository and a
-// self-deleting temporary directory.
+// In-memory fake repository and temporary-directory helpers.
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -29,16 +29,34 @@ public:
 
     void erase(const std::string& path) { files_.erase(path); }
 
-    // Makes read() throw for `path` (simulates an I/O error).
+    // read() will throw for `path`.
     void make_unreadable(const std::string& path) { unreadable_.insert(path); }
 
     std::size_t reads() const { return reads_.load(); }
 
-    std::vector<Entry> list() const override {
-        std::vector<Entry> out;
+    // Prunes like FilesystemSource; each pruned directory counts once.
+    Listing list(const std::vector<std::string>& skip_dirs) const override {
+        Listing out;
+        std::set<std::string> pruned;
         for (const auto& [path, file] : files_) {  // std::map: already sorted
-            out.push_back(Entry{path, file.content.size(), file.mtime});
+            std::string prefix;
+            bool skipped = false;
+            std::size_t start = 0;
+            for (std::size_t slash = path.find('/'); slash != std::string::npos; slash = path.find('/', start)) {
+                const std::string dir = path.substr(start, slash - start);
+                prefix += dir + "/";
+                if (std::find(skip_dirs.begin(), skip_dirs.end(), dir) != skip_dirs.end()) {
+                    pruned.insert(prefix);
+                    skipped = true;
+                    break;
+                }
+                start = slash + 1;
+            }
+            if (!skipped) {
+                out.files.push_back(Entry{path, file.content.size(), file.mtime});
+            }
         }
+        out.skipped_dirs = pruned.size();
         return out;
     }
 

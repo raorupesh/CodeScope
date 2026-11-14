@@ -19,10 +19,7 @@ option(CODESCOPE_BUILD_BENCH "Build the benchmark harness"                      
 option(CODESCOPE_SANITIZE    "Build with AddressSanitizer + UndefinedBehaviorSanitizer (gcc/clang)" OFF)
 option(CODESCOPE_WERROR      "Treat compiler warnings in CodeScope's own code as errors"     OFF)
 
-# ---------------------------------------------------------------------------
-# Warnings: an INTERFACE target so our own targets get them, but third-party
-# code pulled in by FetchContent does not.
-# ---------------------------------------------------------------------------
+# Warnings apply to our targets only, not to fetched dependencies.
 add_library(codescope_warnings INTERFACE)
 if(MSVC)
     target_compile_options(codescope_warnings INTERFACE /W4 /permissive- /utf-8)
@@ -31,7 +28,7 @@ if(MSVC)
     endif()
 else()
     target_compile_options(codescope_warnings INTERFACE -Wall -Wextra -Wpedantic -Wshadow)
-    # GCC 12/13 report false positives for std::optional at -O2.
+    # GCC 12/13 false positives with std::optional at -O2.
     if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
         target_compile_options(codescope_warnings INTERFACE -Wno-maybe-uninitialized)
     endif()
@@ -49,21 +46,20 @@ if(CODESCOPE_SANITIZE)
     endif()
 endif()
 
-# ---------------------------------------------------------------------------
-# Third-party dependencies. SYSTEM keeps their headers out of our -Werror.
-# ---------------------------------------------------------------------------
+# Dependencies are pinned by version and SHA-256; SYSTEM keeps their headers out of -Werror.
 include(FetchContent)
 
 FetchContent_Declare(nlohmann_json
     URL https://github.com/nlohmann/json/releases/download/v3.11.3/json.tar.xz
+    URL_HASH SHA256=d6c65aca6b1ed68e7a182f4757257b107ae403032760ed6ef121c9d55e81757d
     DOWNLOAD_EXTRACT_TIMESTAMP TRUE
     SYSTEM)
 
-# cpp-httplib is header-only. SOURCE_SUBDIR points at a directory without a
-# CMakeLists.txt so FetchContent only downloads it; we wrap it in our own
-# target and keep OpenSSL/zlib/brotli out of the build.
+# Header-only: a non-existent SOURCE_SUBDIR makes FetchContent download it without
+# running its CMake, which keeps OpenSSL/zlib/brotli out of the build.
 FetchContent_Declare(httplib
     URL https://github.com/yhirose/cpp-httplib/archive/refs/tags/v0.18.3.tar.gz
+    URL_HASH SHA256=a0567bcd6c3fe5cef1b329b96245119047f876b49e06cc129a36a7a8dffe173e
     DOWNLOAD_EXTRACT_TIMESTAMP TRUE
     SOURCE_SUBDIR header-only-no-cmake)
 
@@ -77,9 +73,6 @@ if(WIN32)
     target_link_libraries(codescope_httplib INTERFACE ws2_32)
 endif()
 
-# ---------------------------------------------------------------------------
-# Core library: index, query engine, pipeline, serializer, service
-# ---------------------------------------------------------------------------
 add_library(codescope_core
     src/version.cpp
     src/tokenizer.cpp
@@ -90,13 +83,13 @@ add_library(codescope_core
     src/ingest_pipeline.cpp
     src/serializer.cpp
     src/path_utils.cpp
+    src/symbols.cpp
     src/search_service.cpp
 )
 target_include_directories(codescope_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_definitions(codescope_core PRIVATE CODESCOPE_VERSION="${PROJECT_VERSION}")
 target_link_libraries(codescope_core PUBLIC Threads::Threads PRIVATE codescope_warnings)
 
-# HTTP layer (REST API + static web UI)
 add_library(codescope_http
     src/http_server.cpp
 )
@@ -104,17 +97,10 @@ target_link_libraries(codescope_http
     PUBLIC  codescope_core
     PRIVATE codescope_httplib nlohmann_json::nlohmann_json codescope_warnings)
 
-# ---------------------------------------------------------------------------
-# CLI / server executable
-# ---------------------------------------------------------------------------
 add_executable(codescope src/main.cpp)
 target_link_libraries(codescope PRIVATE codescope_core codescope_http codescope_warnings)
-# Default location of the web UI when --web is not given (source tree).
 target_compile_definitions(codescope PRIVATE CODESCOPE_DEFAULT_WEB_DIR="${CMAKE_CURRENT_SOURCE_DIR}/web")
 
-# ---------------------------------------------------------------------------
-# Benchmarks
-# ---------------------------------------------------------------------------
 if(CODESCOPE_BUILD_BENCH)
     add_executable(codescope_bench bench/bench_search.cpp)
     target_link_libraries(codescope_bench PRIVATE codescope_core codescope_warnings)
@@ -125,17 +111,14 @@ if(CODESCOPE_BUILD_BENCH)
     endif()
 endif()
 
-# ---------------------------------------------------------------------------
-# Tests
-# ---------------------------------------------------------------------------
 if(CODESCOPE_BUILD_TESTS)
     enable_testing()
     FetchContent_Declare(googletest
         URL https://github.com/google/googletest/archive/refs/tags/v1.15.2.tar.gz
+        URL_HASH SHA256=7b42b4d6ed48810c5362c265a17faebe90dc2373c885e5216439d37927f02926
         DOWNLOAD_EXTRACT_TIMESTAMP TRUE
         SYSTEM)
-    # Use the same C runtime as our targets on MSVC; don't install gtest.
-    set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
+    set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)  # match the MSVC runtime of our targets
     set(INSTALL_GTEST OFF CACHE BOOL "" FORCE)
     set(BUILD_GMOCK OFF CACHE BOOL "" FORCE)
     FetchContent_MakeAvailable(googletest)

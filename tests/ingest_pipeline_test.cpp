@@ -36,7 +36,7 @@ TEST_F(IngestPipelineTest, FullBuildFiltersAndIndexes) {
     const auto snap = pipeline.run(nullptr);
     const IngestStats& s = snap->stats;
 
-    EXPECT_EQ(s.files_seen, 7u);
+    EXPECT_EQ(s.files_seen, 5u);  // .git/ and node_modules/ are never listed
     EXPECT_EQ(s.indexed, 3u);
     EXPECT_EQ(s.skipped_ignored, 2u);
     EXPECT_EQ(s.skipped_binary, 1u);
@@ -155,7 +155,7 @@ TEST_F(IngestPipelineTest, IgnoredDirectoriesAreConfigurable) {
     options.ignored_dirs = {"src"};
     const IngestPipeline pipeline(repo, options);
     const auto snap = pipeline.run(nullptr);
-    EXPECT_EQ(snap->stats.skipped_ignored, 2u);
+    EXPECT_EQ(snap->stats.skipped_ignored, 1u);  // one directory pruned
     // node_modules and .git are no longer ignored.
     EXPECT_EQ(result_paths(search(*snap, "run_server")), (Paths{".git/config", "node_modules/lib/index.js"}));
 }

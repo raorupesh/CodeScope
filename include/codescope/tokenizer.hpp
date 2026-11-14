@@ -1,7 +1,6 @@
 #pragma once
 
-// Trigram extraction. The index is case-insensitive: only ASCII letters are
-// folded; every other byte (including UTF-8 continuation bytes) is kept as is.
+// Case folding is ASCII-only; other bytes (including UTF-8) are kept as is.
 
 #include <string>
 #include <string_view>
@@ -21,11 +20,9 @@ constexpr Trigram pack_trigram(char a, char b, char c) noexcept {
            static_cast<Trigram>(static_cast<unsigned char>(c));
 }
 
-// ASCII-lowercased copy of `text`.
 std::string ascii_lower(std::string_view text);
 
-// All distinct trigrams of the ASCII-lowercased text, sorted ascending.
-// Returns an empty vector when `text` is shorter than 3 bytes.
+// Distinct trigrams of the lowercased text, sorted; empty under 3 bytes.
 std::vector<Trigram> extract_trigrams(std::string_view text);
 
 }  // namespace codescope

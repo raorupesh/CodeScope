@@ -1,6 +1,4 @@
-// Benchmark harness: index build time, index size, memory, and per-query
-// latency (p50/p95). Prints Markdown tables ready to paste into the README.
-//
+// Index build, size, memory and query p50/p95, printed as Markdown.
 //   codescope_bench <repo> [--queries FILE] [--iterations N] [--limit N]
 
 #include <algorithm>
@@ -31,6 +29,7 @@
 
 #include "codescope/file_source.hpp"
 #include "codescope/ingest_pipeline.hpp"
+#include "codescope/path_utils.hpp"
 #include "codescope/query_engine.hpp"
 #include "codescope/serializer.hpp"
 
@@ -106,7 +105,7 @@ std::size_t parse_count(std::string_view text) {
 std::vector<std::string> read_queries(const fs::path& file) {
     std::ifstream in(file);
     if (!in) {
-        throw std::runtime_error("cannot read queries file " + file.string());
+        throw std::runtime_error("cannot read queries file " + to_utf8(file));
     }
     std::vector<std::string> out;
     std::string line;
@@ -157,14 +156,14 @@ int run(int argc, char* argv[]) {
     }
     const std::vector<std::string> queries = read_queries(queries_file);
 
-    // ---- Index build -------------------------------------------------------
+    // Index build
     const FilesystemSource source(repo);
     const IngestPipeline pipeline(source);
     const auto snapshot = pipeline.run(nullptr);
     const IngestStats& st = snapshot->stats;
     const Memory after_build = memory_usage();
 
-    // ---- On-disk size and load time ----------------------------------------
+    // Size on disk and load time
     const fs::path index_file = fs::temp_directory_path() / "codescope_bench_index.bin";
     IndexSerializer::save(*snapshot, index_file);
     const auto disk_bytes = fs::file_size(index_file);
@@ -180,7 +179,7 @@ int run(int argc, char* argv[]) {
 
     std::cout << std::fixed << std::setprecision(2);
     std::cout << "## Environment\n\n"
-              << "- Repository: `" << source.root().string() << "`\n"
+              << "- Repository: `" << to_utf8(source.root()) << "`\n"
               << "- Compiler: " << compiler() << "\n"
 #ifdef NDEBUG
               << "- Build: optimized (NDEBUG)\n"
@@ -205,7 +204,7 @@ int run(int argc, char* argv[]) {
               << "| Process RSS after build (peak) | " << fmt_mb(after_build.rss_mb) << " ("
               << fmt_mb(after_build.peak_mb) << ") |\n\n";
 
-    // ---- Query latency -----------------------------------------------------
+    // Query latency
     const QueryEngine engine(snapshot->index, snapshot->docs);
     std::vector<double> all;
     std::cout << "## Queries (" << iterations << " runs each, case-insensitive, limit " << limit << ")\n\n"

@@ -1,4 +1,4 @@
-// M1 smoke tests: prove the build, the test runner and CI are wired up.
+// Build and test-runner smoke tests.
 
 #include <gtest/gtest.h>
 

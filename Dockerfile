@@ -1,6 +1,5 @@
 # syntax=docker/dockerfile:1
 
-# ---- Build stage -------------------------------------------------------------
 FROM ubuntu:24.04 AS build
 
 RUN apt-get update \
@@ -20,7 +19,6 @@ RUN cmake -S . -B build -G Ninja \
  && cmake --build build \
  && strip build/codescope
 
-# ---- Runtime stage -----------------------------------------------------------
 FROM ubuntu:24.04
 
 RUN useradd --system --create-home --uid 10001 codescope \
@@ -34,7 +32,6 @@ USER codescope
 EXPOSE 8080
 VOLUME ["/data"]
 
-# Mount the repository to search at /repo (read-only is fine); the index is
-# saved in /data so restarts only re-index changed files.
+# Mount the repository at /repo (read-only); the index persists in /data.
 ENTRYPOINT ["codescope"]
 CMD ["serve", "/repo", "--host", "0.0.0.0", "--port", "8080", "--index", "/data/index.bin", "--web", "/app/web"]

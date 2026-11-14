@@ -14,18 +14,18 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Decides what needs testing. Docs/README/image-only changes skip the builds.
-  # Skipped steps and jobs still report success, so the required checks pass.
+  # Docs/image-only changes skip the builds; skipped jobs still satisfy required checks.
   changes:
     name: changes
     runs-on: ubuntu-24.04
     outputs:
-      code: ${{ steps.filter.outputs.code }}  # C++ sources, build, tests, CI
-      app: ${{ steps.filter.outputs.app }}    # code, or anything shipped in the Docker image
+      code: ${{ steps.filter.outputs.code }}
+      app: ${{ steps.filter.outputs.app }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Detect changed files
         id: filter
@@ -69,22 +69,23 @@ jobs:
       CXX: ${{ matrix.cxx }}
       ASAN_OPTIONS: halt_on_error=1:detect_leaks=1
       UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
-      # Conditions live on the steps, not the job: a skipped matrix job would
-      # not report the per-compiler check names the ruleset requires.
+      # Step-level conditions: a skipped matrix job wouldn't report the per-compiler check names.
       RUN: ${{ needs.changes.outputs.code }}
     steps:
       - name: Nothing to build
         if: env.RUN != 'true'
         run: echo "No C++ or build changes; skipping."
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
         if: env.RUN == 'true'
+        with:
+          persist-credentials: false
 
       - name: Install Ninja
         if: env.RUN == 'true'
         run: sudo apt-get update && sudo apt-get install -y ninja-build
 
-      # Kernels with high-entropy ASLR break older ASan runtimes ("DEADLYSIGNAL" loops).
+      # High-entropy ASLR breaks older ASan runtimes.
       - name: Lower ASLR entropy for ASan
         if: env.RUN == 'true' && matrix.sanitize == 'ON'
         run: sudo sysctl -w vm.mmap_rnd_bits=28
@@ -110,6 +111,7 @@ jobs:
         run: |
           ./build/codescope --version
           ./build/codescope search tests/fixtures/sample_repo HttpRequest --ext .hpp
+          ./build/codescope def tests/fixtures/sample_repo HttpRequest
 
   windows:
     name: msvc
@@ -117,7 +119,9 @@ jobs:
     if: needs.changes.outputs.code == 'true'
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+        with:
+          persist-credentials: false
 
       - name: Configure
         run: cmake -S . -B build
@@ -134,14 +138,16 @@ jobs:
     if: needs.changes.outputs.app == 'true'
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+        with:
+          persist-credentials: false
 
       - name: Build image
         run: docker build -t codescope:ci .
 
       - name: Serve a repository and query the API
         run: |
-          docker run -d --name cs -p 8080:8080 -v "$PWD:/repo:ro" codescope:ci
+          docker run -d --name cs -p 127.0.0.1:8080:8080 -v "$PWD:/repo:ro" codescope:ci
           for i in $(seq 1 60); do
             curl -fsS http://localhost:8080/health && break
             sleep 1
@@ -150,6 +156,7 @@ jobs:
           grep -q '"total_files":' search.json
           curl -fsS http://localhost:8080/ | grep -q '<title>CodeScope</title>'
           curl -fsS -o /dev/null http://localhost:8080/favicon.ico
+          test "$(curl -s -o /dev/null -w '%{http_code}' -H 'Host: evil.example' http://localhost:8080/api/stats)" = 403
 
       - name: Container logs
         if: always()
