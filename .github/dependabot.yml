@@ -9,3 +9,17 @@ updates:
     directory: /
     schedule:
       interval: monthly
+    # Stay on Ubuntu LTS releases (even year, .04). Interim releases are
+    # supported for only nine months.
+    ignore:
+      - dependency-name: ubuntu
+        versions:
+          - "24.10"
+          - "25.04"
+          - "25.10"
+          - "26.10"
+          - "27.04"
+          - "27.10"
+          - "28.10"
+          - "29.04"
+          - "29.10"
